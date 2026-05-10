@@ -220,9 +220,16 @@ esta disponible. Si ya tenias claves en claro, se migran al siguiente arranque.
 
 ## Licencia
 
-El codigo se distribuye bajo licencia MIT. El repo incluye `LICENSE`,
-`CHANGELOG.md` y un workflow de GitHub Actions para generar el portable de
-Windows desde GitHub.
+El codigo se distribuye bajo PolyForm Noncommercial 1.0.0. Puedes usarlo,
+estudiarlo, modificarlo y compartirlo para fines no comerciales.
+
+No esta permitido venderlo, revenderlo, ofrecerlo como SaaS/producto comercial,
+monetizar forks, empaquetar builds comerciales ni usarlo con una finalidad
+comercial sin permiso escrito del titular.
+
+Para un uso comercial, pide una licencia comercial separada. El repo incluye
+`LICENSE`, `CHANGELOG.md` y un workflow de GitHub Actions para generar el
+portable de Windows desde GitHub.
 
 ## Notas tecnicas
 
