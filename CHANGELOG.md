@@ -24,5 +24,5 @@
 - Added local API key encryption with Electron safeStorage.
 - Added app icons for Windows packaging and tray.
 - Added pending transcript cleanup after each answer.
-- Switched distribution metadata to proprietary/private.
+- Switched distribution metadata to MIT.
 - Added protected production build step with JavaScript obfuscation and no sourcemaps.

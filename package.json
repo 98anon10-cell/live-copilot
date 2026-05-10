@@ -85,5 +85,5 @@
     "asar": true,
     "compression": "maximum"
   },
-  "license": "UNLICENSED"
+  "license": "MIT"
 }

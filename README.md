@@ -213,11 +213,11 @@ En build portable, `userData` apunta a `Live Copilot Data` junto al ejecutable.
 Las claves nuevas se guardan cifradas con prefijo `enc:v1:` cuando `safeStorage`
 esta disponible. Si ya tenias claves en claro, se migran al siguiente arranque.
 
-## Distribucion privada
+## Licencia
 
-El codigo y los binarios se distribuyen bajo licencia propietaria. El repo
-incluye `LICENSE`, `CHANGELOG.md` y un workflow de GitHub Actions para generar
-el portable de Windows en repos privados.
+El codigo se distribuye bajo licencia MIT. El repo incluye `LICENSE`,
+`CHANGELOG.md` y un workflow de GitHub Actions para generar el portable de
+Windows desde GitHub.
 
 ## Notas tecnicas
 
