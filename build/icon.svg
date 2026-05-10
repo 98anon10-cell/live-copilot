@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Live Copilot">
+  <rect width="256" height="256" rx="56" fill="#0b0f19"/>
+  <path d="M68 130c0-38 26-66 62-66 32 0 56 19 62 49h-35c-5-12-15-19-28-19-17 0-29 14-29 36s12 36 29 36c14 0 24-7 29-20h35c-7 31-31 50-64 50-36 0-61-28-61-66Z" fill="#f8fafc"/>
+  <path d="M74 50h40v34H74V50Zm68 122h40v34h-40v-34Z" fill="#38bdf8"/>
+  <circle cx="190" cy="70" r="14" fill="#22c55e"/>
+</svg>

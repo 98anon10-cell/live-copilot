@@ -1,0 +1,22 @@
+node_modules/
+.claude/
+out/
+dist/
+dist-*/
+release/
+.vite-cache/
+*.log
+*.tsbuildinfo
+*.env
+.env*
+*.p12
+*.pfx
+*.pem
+*.key
+*.crt
+Live Copilot Data/
+src/**/*.js
+src/**/*.d.ts
+!src/renderer/src/global.d.ts
+!src/renderer/src/assets.d.ts
+.DS_Store

@@ -1,0 +1,36 @@
+name: Windows Portable
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check
+        run: npm run check
+
+      - name: Build portable release
+        run: npm run release:portable
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-copilot-windows-portable
+          path: release/**
