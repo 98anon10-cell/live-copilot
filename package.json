@@ -1,5 +1,5 @@
 {
-  "name": "entrevista-ai",
+  "name": "live-copilot",
   "version": "0.1.0",
   "description": "Live Copilot - asistente de escritorio privado con BYOK",
   "main": "./out/main/index.js",

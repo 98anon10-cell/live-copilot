@@ -60,7 +60,8 @@ va al proveedor STT elegido y el prompt va al proveedor LLM elegido.
 ## Desarrollo
 
 ```bash
-cd entrevista-ai
+git clone https://github.com/98anon10-cell/live-copilot.git
+cd live-copilot
 npm install
 npm run dev
 ```
