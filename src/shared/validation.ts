@@ -80,8 +80,11 @@ export function providerHasSecret(p: { apiKey?: string; hasApiKey?: boolean }): 
   return Boolean(p.apiKey?.trim() || p.hasApiKey)
 }
 
-export function isAiProviderReady(p: Pick<AiProvider, 'kind' | 'apiKey' | 'model' | 'hasApiKey'>): boolean {
-  if (p.kind !== 'ollama' && !providerHasSecret(p)) return false
+export function isAiProviderReady(
+  p: Pick<AiProvider, 'kind' | 'baseUrl' | 'apiKey' | 'model' | 'hasApiKey'>
+): boolean {
+  if (p.kind === 'custom' && !p.baseUrl.trim()) return false
+  if (p.kind !== 'ollama' && p.kind !== 'custom' && !providerHasSecret(p)) return false
   return Boolean(p.model.trim())
 }
 

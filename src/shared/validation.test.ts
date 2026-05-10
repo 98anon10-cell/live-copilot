@@ -42,6 +42,31 @@ describe('validation', () => {
     expect(providerHasSecret(settings.aiProviders[0])).toBe(true)
   })
 
+  it('requires base URL for custom AI providers', () => {
+    const settings = sanitizeSettings({
+      aiProviders: [
+        {
+          id: 'custom-missing-url',
+          label: 'Custom missing URL',
+          kind: 'custom',
+          baseUrl: '',
+          apiKey: 'key',
+          model: 'model'
+        },
+        {
+          id: 'custom-ready',
+          label: 'Custom ready',
+          kind: 'custom',
+          baseUrl: 'http://localhost:1234/v1',
+          apiKey: '',
+          model: 'model'
+        }
+      ]
+    })
+
+    expect(settings.aiProviders.map((provider) => provider.id)).toEqual(['custom-ready'])
+  })
+
   it('drops malformed sessions and trims unsafe nested data', () => {
     const sessions = sanitizeSessions([
       null,

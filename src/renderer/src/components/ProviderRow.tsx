@@ -41,6 +41,26 @@ const STT_DEFAULT_MODEL: Record<SttProviderKind, string> = {
   'openai-compatible': 'whisper-1'
 }
 
+function aiBaseUrlHint(kind: AiProviderKind): string {
+  return kind === 'custom'
+    ? 'obligatoria'
+    : 'opcional, usa la predeterminada'
+}
+
+function aiBaseUrlPlaceholder(kind: AiProviderKind): string {
+  return PROVIDER_DEFAULT_BASE_URL[kind] || 'https://tu-servidor.example/v1'
+}
+
+function sttBaseUrlHint(): string {
+  return 'opcional, usa la predeterminada'
+}
+
+function sttBaseUrlDefault(kind: SttProviderKind): string {
+  if (kind === 'speechmatics') return 'wss://eu2.rt.speechmatics.com/v2'
+  if (kind === 'groq-whisper') return 'https://api.groq.com/openai/v1'
+  return 'http://localhost:8080/v1'
+}
+
 /**
  * Row props share the same shape: caller passes an initial provider, plus handlers.
  * Editing happens in a local buffer. Save persists. Cancel/X discards the buffer.
@@ -119,18 +139,26 @@ export function AiProviderRow({
         <div>
           <label className="label">
             Base URL{' '}
-            {draft.kind === 'ollama' && (
-              <span className="text-[10px] normal-case text-muted-foreground/80">
-                (déjalo vacío)
-              </span>
-            )}
+            <span className="text-[10px] normal-case text-muted-foreground/80">
+              ({aiBaseUrlHint(draft.kind)})
+            </span>
           </label>
           <input
             className="input mt-1"
-            placeholder={PROVIDER_DEFAULT_BASE_URL[draft.kind] || 'https://…'}
+            placeholder={aiBaseUrlPlaceholder(draft.kind)}
             value={draft.baseUrl}
             onChange={(e) => patch({ baseUrl: e.target.value })}
           />
+          {draft.kind !== 'custom' && (
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Vacío = {PROVIDER_DEFAULT_BASE_URL[draft.kind]}
+            </p>
+          )}
+          {draft.kind === 'custom' && (
+            <p className="text-[11px] text-amber-300 mt-1">
+              Pon la URL completa del servidor, normalmente terminada en /v1.
+            </p>
+          )}
         </div>
         <div>
           <label className="label">
@@ -350,24 +378,19 @@ export function SttProviderRow({
       <div>
         <label className="label">
           Base URL{' '}
-          {(draft.kind === 'speechmatics' || draft.kind === 'groq-whisper') && (
-            <span className="text-[10px] normal-case text-muted-foreground/80">
-              (déjalo vacío)
-            </span>
-          )}
+          <span className="text-[10px] normal-case text-muted-foreground/80">
+            ({sttBaseUrlHint()})
+          </span>
         </label>
         <input
           className="input mt-1"
-          placeholder={
-            draft.kind === 'speechmatics'
-              ? 'wss://eu2.rt.speechmatics.com/v2'
-              : draft.kind === 'groq-whisper'
-                ? 'https://api.groq.com/openai/v1'
-                : 'http://localhost:8080/v1'
-          }
+          placeholder={sttBaseUrlDefault(draft.kind)}
           value={draft.baseUrl}
           onChange={(e) => patch({ baseUrl: e.target.value })}
         />
+        <p className="text-[11px] text-muted-foreground mt-1">
+          Vacío = {sttBaseUrlDefault(draft.kind)}
+        </p>
       </div>
       <div>
         <label className="label">API key</label>

@@ -71,7 +71,10 @@ export interface ProviderStatus {
 }
 
 export function aiProviderStatus(p: AiProvider): ProviderStatus {
-  if (p.kind !== 'ollama' && !providerHasSecret(p)) {
+  if (p.kind === 'custom' && !p.baseUrl.trim()) {
+    return { ready: false, hint: `${p.kind} - needs Base URL` }
+  }
+  if (p.kind !== 'ollama' && p.kind !== 'custom' && !providerHasSecret(p)) {
     return { ready: false, hint: `${p.kind} · needs API key` }
   }
   if (!p.model || !p.model.trim()) {
