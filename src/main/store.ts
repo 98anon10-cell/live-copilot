@@ -1,13 +1,26 @@
 import { app, safeStorage } from 'electron'
 import { promises as fs } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
-import type { AppSettings, InterviewSession } from '../shared/types'
+import type { AiProviderKind, AppSettings, InterviewSession, SttProviderKind } from '../shared/types'
 import { DEFAULT_SETTINGS, isAiProviderReady, isSttProviderReady } from '../shared/validation'
 
 const defaultSettings: AppSettings = DEFAULT_SETTINGS
 
 const SECRET_PREFIX = 'enc:v1:'
 const writeQueues = new Map<string, Promise<void>>()
+const AI_DEFAULT_BASE_URL: Record<AiProviderKind, string> = {
+  openai: 'https://api.openai.com/v1',
+  anthropic: 'https://api.anthropic.com/v1',
+  groq: 'https://api.groq.com/openai/v1',
+  cerebras: 'https://api.cerebras.ai/v1',
+  ollama: 'http://localhost:11434/v1',
+  custom: ''
+}
+const STT_DEFAULT_BASE_URL: Record<SttProviderKind, string> = {
+  speechmatics: 'wss://eu2.rt.speechmatics.com/v2',
+  'groq-whisper': 'https://api.groq.com/openai/v1',
+  'openai-compatible': 'http://localhost:8080/v1'
+}
 
 function dataDir(): string {
   return app.getPath('userData')
@@ -329,19 +342,35 @@ export function redactSettings(settings: AppSettings): AppSettings {
 
 export function mergeStoredSecrets(next: AppSettings, current: AppSettings | null): AppSettings {
   if (!current) return next
-  const currentAi = new Map(current.aiProviders.map((p) => [p.id, p.apiKey]))
-  const currentStt = new Map(current.sttProviders.map((p) => [p.id, p.apiKey]))
+  const currentAi = new Map(current.aiProviders.map((p) => [p.id, p]))
+  const currentStt = new Map(current.sttProviders.map((p) => [p.id, p]))
   return {
     ...next,
-    aiProviders: next.aiProviders.map((p) => ({
-      ...p,
-      apiKey: p.apiKey.trim() ? p.apiKey : currentAi.get(p.id) ?? ''
-    })),
-    sttProviders: next.sttProviders.map((p) => ({
-      ...p,
-      apiKey: p.apiKey.trim() ? p.apiKey : currentStt.get(p.id) ?? ''
-    }))
+    aiProviders: next.aiProviders.map((p) => {
+      if (p.apiKey.trim()) return p
+      const stored = currentAi.get(p.id)
+      const sameEndpoint =
+        stored &&
+        stored.kind === p.kind &&
+        normalizeBaseUrl(p.baseUrl, AI_DEFAULT_BASE_URL[p.kind]) ===
+          normalizeBaseUrl(stored.baseUrl, AI_DEFAULT_BASE_URL[stored.kind])
+      return { ...p, apiKey: sameEndpoint ? stored.apiKey : '' }
+    }),
+    sttProviders: next.sttProviders.map((p) => {
+      if (p.apiKey.trim()) return p
+      const stored = currentStt.get(p.id)
+      const sameEndpoint =
+        stored &&
+        stored.kind === p.kind &&
+        normalizeBaseUrl(p.baseUrl, STT_DEFAULT_BASE_URL[p.kind]) ===
+          normalizeBaseUrl(stored.baseUrl, STT_DEFAULT_BASE_URL[stored.kind])
+      return { ...p, apiKey: sameEndpoint ? stored.apiKey : '' }
+    })
   }
+}
+
+function normalizeBaseUrl(baseUrl: string, defaultBaseUrl: string): string {
+  return (baseUrl.trim() || defaultBaseUrl).replace(/\/+$/, '').toLowerCase()
 }
 
 export async function saveSettings(settings: AppSettings): Promise<void> {

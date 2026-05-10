@@ -245,7 +245,7 @@ export function LiveSession(): JSX.Element {
       })),
       aiMessages: messagesRef.current
         .filter((m) => m.text.length > 0)
-        .map(({ text, imageUrl, ts }) => ({ text, imageUrl, ts })),
+        .map(({ text, ts }) => ({ text, ts })),
       durationSec: Math.round((Date.now() - startedAtRef.current) / 1000)
     })
   }
@@ -489,7 +489,7 @@ export function LiveSession(): JSX.Element {
       setErrorMsg('No AI provider for this session.')
       return
     }
-    const modelToUse = provider.model || session.aiModel
+    const modelToUse = session.aiModel || provider.model
     if (!modelToUse) {
       logger.warn('[Live] submitToLlm: no model')
       setErrorMsg('The selected AI profile has no model. Open it and add one.')

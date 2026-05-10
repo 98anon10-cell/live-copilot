@@ -65,7 +65,24 @@ function randomId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+function redactSettingsForRenderer(settings: AppSettings): AppSettings {
+  return {
+    ...settings,
+    aiProviders: settings.aiProviders.map((provider) => ({
+      ...provider,
+      apiKey: '',
+      hasApiKey: Boolean(provider.apiKey.trim() || provider.hasApiKey)
+    })),
+    sttProviders: settings.sttProviders.map((provider) => ({
+      ...provider,
+      apiKey: '',
+      hasApiKey: Boolean(provider.apiKey.trim() || provider.hasApiKey)
+    }))
+  }
+}
+
 let sessionSaveQueue: Promise<void> = Promise.resolve()
+let settingsSaveVersion = 0
 
 function queueSaveSessions(sessions: InterviewSession[]): void {
   const snapshot = structuredClone(sessions)
@@ -152,8 +169,10 @@ export const useApp = create<AppState>((set, get) => ({
 
   updateSettings: async (patch) => {
     const settings = { ...get().settings, ...patch }
-    set({ settings })
-    await window.api.setSettings(settings)
+    const version = ++settingsSaveVersion
+    set({ settings: redactSettingsForRenderer(settings) })
+    const saved = await window.api.setSettings(settings)
+    if (version === settingsSaveVersion) set({ settings: saved })
   },
 
   setWindowSize: async (size, persist = true) => {
@@ -162,9 +181,11 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   setPrivateMode: async (privateMode, persist = true) => {
-    const settings = { ...get().settings, privateMode }
-    set({ settings })
-    if (persist) await window.api.setSettings(settings)
+    if (persist) {
+      await get().updateSettings({ privateMode })
+    } else {
+      set({ settings: { ...get().settings, privateMode } })
+    }
   },
 
   upsertAiProvider: async (provider) => {

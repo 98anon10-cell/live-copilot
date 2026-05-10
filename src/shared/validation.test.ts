@@ -86,16 +86,21 @@ describe('validation', () => {
           { speaker: 'them', text: 'hello', ts: 3 },
           { speaker: 'bad', text: 'drop', ts: 4 }
         ],
-        aiMessages: [{ text: 'answer', imageUrl: 'file:///bad', ts: 5 }]
+        aiMessages: [
+          { text: 'answer', imageUrl: 'file:///bad', ts: 5 },
+          { text: 'answer 2', imageUrl: `data:image/png;base64,${'a'.repeat(200_001)}`, ts: 6 }
+        ]
       }
     ])
 
     expect(sessions).toHaveLength(1)
     expect(sessions[0].transcript).toEqual([{ speaker: 'them', text: 'hello', ts: 3 }])
     expect(sessions[0].aiMessages?.[0].imageUrl).toBeUndefined()
+    expect(sessions[0].aiMessages?.[1].imageUrl).toBeUndefined()
   })
 
   it('sanitizes chat stream requests', () => {
+    const oversizedImage = `data:image/png;base64,${'a'.repeat(8_000_001)}`
     const request = sanitizeChatStreamRequest({
       id: 'chat-1',
       providerId: 'p1',
@@ -105,7 +110,7 @@ describe('validation', () => {
         { role: 'tool', content: 'drop' },
         { role: 'user', content: 'question' }
       ],
-      images: ['data:image/png;base64,abc', 'file:///nope'],
+      images: ['data:image/png;base64,abc', 'file:///nope', oversizedImage],
       temperature: 99
     })
 

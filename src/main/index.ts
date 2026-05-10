@@ -12,6 +12,7 @@ import {
   shell,
   Tray
 } from 'electron'
+import type { NativeImage } from 'electron'
 import { lookup } from 'node:dns/promises'
 import { isIP } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
@@ -48,6 +49,10 @@ let saveBoundsTimer: NodeJS.Timeout | null = null
 const chatControllers = new Map<string, AbortController>()
 const sttClients = new Map<string, SttClient>()
 const PORTABLE_DATA_DIR_NAME = 'Live Copilot Data'
+const MAX_SCREENSHOT_DATA_URL_LENGTH = 7_500_000
+const MAX_SCREENSHOT_DIMENSION = 1920
+const MIN_SCREENSHOT_DIMENSION = 320
+const MAX_STT_PCM_BUFFER_BYTES = 512_000
 
 const SIZES: Record<WindowSize, { width: number; height: number }> = {
   pill: { width: 132, height: 44 },
@@ -262,17 +267,41 @@ async function listCaptureDisplays(): Promise<CaptureDisplay[]> {
   }))
 }
 
+function fitDimensions(
+  size: { width: number; height: number },
+  maxDimension: number
+): { width: number; height: number } {
+  const longest = Math.max(size.width, size.height)
+  if (longest <= maxDimension) return size
+  const scale = maxDimension / longest
+  return {
+    width: Math.max(1, Math.round(size.width * scale)),
+    height: Math.max(1, Math.round(size.height * scale))
+  }
+}
+
+function screenshotDataUrl(image: NativeImage): string | null {
+  let current = image
+  let dataUrl = current.toDataURL()
+  while (dataUrl.length > MAX_SCREENSHOT_DATA_URL_LENGTH) {
+    const size = current.getSize()
+    const longest = Math.max(size.width, size.height)
+    if (longest <= MIN_SCREENSHOT_DIMENSION) break
+    current = current.resize(fitDimensions(size, Math.floor(longest * 0.75)))
+    dataUrl = current.toDataURL()
+  }
+  return dataUrl.length <= MAX_SCREENSHOT_DATA_URL_LENGTH ? dataUrl : null
+}
+
 async function captureMainScreen(displayId = 'auto'): Promise<string | null> {
   const displays = screen.getAllDisplays()
   const primary = screen.getPrimaryDisplay()
   const targetDisplay = displays.find((d) => String(d.id) === displayId)
   const thumbnailDisplay = targetDisplay ?? primary
+  const thumbnailSize = fitDimensions(thumbnailDisplay.size, MAX_SCREENSHOT_DIMENSION)
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
-    thumbnailSize: {
-      width: thumbnailDisplay.size.width,
-      height: thumbnailDisplay.size.height
-    }
+    thumbnailSize
   })
   if (sources.length === 0) return null
   const ourDisplay = mainWindow ? screen.getDisplayMatching(mainWindow.getBounds()) : primary
@@ -281,7 +310,7 @@ async function captureMainScreen(displayId = 'auto'): Promise<string | null> {
       ? sources.find((s) => s.display_id === String(targetDisplay.id)) ?? sources[0]
       : sources.find((s) => !s.display_id || s.display_id !== String(ourDisplay.id)) ??
         sources[0]
-  return pick.thumbnail.toDataURL()
+  return screenshotDataUrl(pick.thumbnail)
 }
 
 function broadcast(channel: string, ...args: unknown[]): void {
@@ -491,7 +520,7 @@ function registerIpc(): void {
     await saveSettings(withSecrets)
     applySettingsToWindow(withSecrets)
     refreshTrayMenu()
-    return true
+    return redactSettings(withSecrets)
   })
 
   ipcMain.handle('sessions:list', async () => loadSessions())
@@ -626,6 +655,8 @@ function registerIpc(): void {
     if (typeof id !== 'string') return
     const client = sttClients.get(id)
     if (!client || !(buffer instanceof ArrayBuffer)) return
+    if (buffer.byteLength === 0 || buffer.byteLength > MAX_STT_PCM_BUFFER_BYTES) return
+    if (buffer.byteLength % Int16Array.BYTES_PER_ELEMENT !== 0) return
     client.sendPcm(new Int16Array(buffer))
   })
 

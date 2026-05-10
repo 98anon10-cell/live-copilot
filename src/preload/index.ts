@@ -22,7 +22,7 @@ function on<T>(channel: string, listener: Listener<T>): () => void {
 
 const api = {
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke('settings:get'),
-  setSettings: (settings: AppSettings): Promise<boolean> =>
+  setSettings: (settings: AppSettings): Promise<AppSettings> =>
     ipcRenderer.invoke('settings:set', settings),
   listSessions: (): Promise<InterviewSession[]> => ipcRenderer.invoke('sessions:list'),
   saveSessions: (sessions: InterviewSession[]): Promise<boolean> =>

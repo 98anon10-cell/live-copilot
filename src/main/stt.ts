@@ -34,6 +34,8 @@ interface WhisperChunkedOptions {
 const SAMPLE_RATE = 16000
 const GROQ_WHISPER_BASE_URL = 'https://api.groq.com/openai/v1'
 const GROQ_DEFAULT_MODEL = 'whisper-large-v3-turbo'
+const SPEECHMATICS_CONNECT_TIMEOUT_MS = 15000
+const WHISPER_TRANSCRIBE_TIMEOUT_MS = 30000
 
 class SpeechmaticsClient {
   private ws: WebSocket | null = null
@@ -46,6 +48,29 @@ class SpeechmaticsClient {
   async connect(): Promise<void> {
     const jwt = await this.fetchTemporaryJwt()
     return new Promise((resolve, reject) => {
+      let settled = false
+      const timeout = setTimeout(() => {
+        if (settled) return
+        settled = true
+        try {
+          this.ws?.close()
+        } catch {
+          // Closing best-effort.
+        }
+        reject(new Error('Speechmatics connection timed out.'))
+      }, SPEECHMATICS_CONNECT_TIMEOUT_MS)
+      const resolveStarted = (): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        resolve()
+      }
+      const rejectStart = (err: Error): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        reject(err)
+      }
       const baseUrl = (this.opts.baseUrl?.trim() || 'wss://eu2.rt.speechmatics.com/v2').replace(
         /\/+$/,
         ''
@@ -86,7 +111,7 @@ class SpeechmaticsClient {
             this.opts.callbacks.onOpen?.()
             for (const buf of this.pending) this.sendAudioBuffer(buf)
             this.pending = []
-            resolve()
+            resolveStarted()
             break
           case 'AddPartialTranscript': {
             const text = readTranscript(msg)
@@ -101,9 +126,9 @@ class SpeechmaticsClient {
           case 'Error':
           case 'Warning':
             if (typeof msg.type === 'string' && typeof msg.reason === 'string') {
-              this.opts.callbacks.onError(
-                new Error(`Speechmatics ${msg.message}: ${msg.type} - ${msg.reason}`)
-              )
+              const err = new Error(`Speechmatics ${msg.message}: ${msg.type} - ${msg.reason}`)
+              this.opts.callbacks.onError(err)
+              if (!this.started && msg.message === 'Error') rejectStart(err)
             }
             break
           case 'EndOfTranscript':
@@ -115,10 +140,11 @@ class SpeechmaticsClient {
       ws.onerror = () => {
         const err = new Error('Speechmatics connection error')
         this.opts.callbacks.onError(err)
-        reject(err)
+        rejectStart(err)
       }
 
       ws.onclose = () => {
+        if (!this.started) rejectStart(new Error('Speechmatics connection closed before starting.'))
         this.started = false
         this.opts.callbacks.onClose()
       }
@@ -242,7 +268,8 @@ class WhisperChunkedClient {
       const res = await fetch(`${this.opts.baseUrl.replace(/\/+$/, '')}/audio/transcriptions`, {
         method: 'POST',
         headers,
-        body: fd
+        body: fd,
+        signal: AbortSignal.timeout(WHISPER_TRANSCRIBE_TIMEOUT_MS)
       })
       if (!res.ok) {
         const text = await res.text().catch(() => '')

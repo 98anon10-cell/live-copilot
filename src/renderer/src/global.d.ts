@@ -13,7 +13,7 @@ import type {
 
 export interface WindowApi {
   getSettings: () => Promise<AppSettings>
-  setSettings: (settings: AppSettings) => Promise<boolean>
+  setSettings: (settings: AppSettings) => Promise<AppSettings>
   listSessions: () => Promise<InterviewSession[]>
   saveSessions: (sessions: InterviewSession[]) => Promise<boolean>
   pickDocument: () => Promise<SessionDocument[]>

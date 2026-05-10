@@ -30,6 +30,8 @@ const STT_KINDS: readonly SttProviderKind[] = [
 ]
 
 const WINDOW_SIZES: readonly WindowSize[] = ['pill', 'compact', 'expanded']
+const MAX_CHAT_IMAGE_DATA_URL_LENGTH = 8_000_000
+const MAX_SAVED_IMAGE_DATA_URL_LENGTH = 200_000
 
 export const DEFAULT_SETTINGS: AppSettings = {
   aiProviders: [],
@@ -50,6 +52,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function asString(value: unknown, max = 20000): string {
   if (typeof value !== 'string') return ''
   return value.slice(0, max)
+}
+
+function isImageDataUrl(value: string): boolean {
+  return /^data:image\/[\w.+-]+;base64,/.test(value)
 }
 
 function asBoolean(value: unknown, fallback: boolean): boolean {
@@ -208,8 +214,10 @@ function sanitizeAiMessage(value: unknown): SessionAiMessage | null {
     text,
     ts: asNumber(value.ts, Date.now())
   }
-  const imageUrl = asString(value.imageUrl, 5000000)
-  if (imageUrl.startsWith('data:image/')) message.imageUrl = imageUrl
+  const imageUrl = typeof value.imageUrl === 'string' ? value.imageUrl : ''
+  if (imageUrl.length <= MAX_SAVED_IMAGE_DATA_URL_LENGTH && isImageDataUrl(imageUrl)) {
+    message.imageUrl = imageUrl
+  }
   return message
 }
 
@@ -289,8 +297,12 @@ export function sanitizeChatStreamRequest(value: unknown): ChatStreamRequest | n
   }
   if (Array.isArray(value.images)) {
     request.images = value.images
-      .map((image) => asString(image, 8000000))
-      .filter((image) => /^data:image\/[\w.+-]+;base64,/.test(image))
+      .filter(
+        (image): image is string =>
+          typeof image === 'string' &&
+          image.length <= MAX_CHAT_IMAGE_DATA_URL_LENGTH &&
+          isImageDataUrl(image)
+      )
       .slice(0, 3)
   }
   return request
