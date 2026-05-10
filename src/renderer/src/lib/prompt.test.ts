@@ -24,6 +24,7 @@ describe('prompt builders', () => {
     const prompt = buildSystemPrompt(session())
 
     expect(prompt).toContain('ready-to-read answer')
+    expect(prompt).toContain('answer all of them in order')
     expect(prompt).toContain('Use concise backend examples.')
   })
 
@@ -37,5 +38,16 @@ describe('prompt builders', () => {
   it('builds a fallback user prompt when transcript is empty', () => {
     expect(buildUserPrompt('', 'Answer from screenshot')).toContain('Nothing has been said yet.')
     expect(buildUserPrompt('Question?', 'Use bullets')).toContain('Extra instruction')
+  })
+
+  it('adds compact memory without making it the active request', () => {
+    const prompt = buildUserPrompt('What would you improve?', {
+      conversationMemory: 'Earlier: we discussed caching.',
+      userInstruction: 'Use bullets'
+    })
+
+    expect(prompt).toContain('Compact memory from earlier')
+    expect(prompt).toContain('Current live transcript to answer now')
+    expect(prompt).toContain('What would you improve?')
   })
 })

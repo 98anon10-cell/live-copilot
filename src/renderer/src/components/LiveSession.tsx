@@ -23,7 +23,11 @@ import { createSttClient, type SttClient } from '../lib/stt'
 import { chatStream, modelSupportsImages } from '../lib/ai'
 import { buildSystemPrompt, buildUserPrompt } from '../lib/prompt'
 import { logger } from '../lib/logger'
-import { latestThemTurn, looksLikeQuestion, normalizeQuestionText } from '../lib/question'
+import {
+  normalizeQuestionText,
+  questionCandidatesFromTranscript,
+  type QuestionCandidate
+} from '../lib/question'
 import type { AudioMode, CaptureDisplay, TranscriptChunk } from '../../../shared/types'
 import { providerHasSecret } from '../../../shared/validation'
 import { Button } from './ui/button'
@@ -50,14 +54,24 @@ interface AiMessage {
 interface SubmittedTranscriptContext {
   maxChunkId: number | null
   partialText: string
+  memoryText: string
 }
 
 interface SubmitToLlmOptions {
   imageUrl?: string
+  autoQuestion?: AutoQuestionJob
+}
+
+interface AutoQuestionJob extends QuestionCandidate {
+  key: string
 }
 
 const MAX_TRANSCRIPT_ITEMS = 200
 const MAX_SAVED_TRANSCRIPT_ITEMS = 2000
+const AUTO_QUESTION_SILENCE_MS = 850
+const AUTO_SEEN_KEY_LIMIT = 200
+const CONVERSATION_MEMORY_MAX_CHARS = 2600
+const CONVERSATION_MEMORY_ENTRY_MAX_CHARS = 900
 const SCREENSHOT_REPLY_INSTRUCTION =
   'Use the attached screenshot as the main context. If it contains a question, code, error, form, document or task, answer it directly and concisely.'
 
@@ -74,6 +88,28 @@ function normalizeTranscriptMatch(text: string): string {
     .toLowerCase()
     .replace(/[.,;:!?¿¡…]+$/g, '')
     .replace(/\s+/g, ' ')
+}
+
+function transcriptChunksToText(
+  chunks: Array<Pick<LiveTranscriptChunk, 'speaker' | 'text'>>
+): string {
+  return chunks.map((c) => (c.speaker === 'me' ? `(me) ${c.text}` : c.text)).join(' ')
+}
+
+function limitTail(text: string, maxChars: number): string {
+  const trimmed = text.trim()
+  if (trimmed.length <= maxChars) return trimmed
+  return `...${trimmed.slice(-maxChars)}`
+}
+
+function limitHead(text: string, maxChars: number): string {
+  const trimmed = text.trim().replace(/\s+/g, ' ')
+  if (trimmed.length <= maxChars) return trimmed
+  return `${trimmed.slice(0, maxChars - 3)}...`
+}
+
+function autoQuestionKey(candidate: QuestionCandidate): string {
+  return `${candidate.maxChunkId}:${candidate.normalized}`
 }
 
 export function LiveSession(): JSX.Element {
@@ -108,6 +144,7 @@ export function LiveSession(): JSX.Element {
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [shotPreview, setShotPreview] = useState<string | null>(null)
   const [answering, setAnswering] = useState(false)
+  const [autoQueue, setAutoQueue] = useState<AutoQuestionJob[]>([])
   const [capturingScreen, setCapturingScreen] = useState(false)
   const [captureDisplays, setCaptureDisplays] = useState<CaptureDisplay[]>([])
 
@@ -128,16 +165,22 @@ export function LiveSession(): JSX.Element {
   const sessionTranscriptRef = useRef<LiveTranscriptChunk[]>([])
   const transcriptRef = useRef<LiveTranscriptChunk[]>([])
   const messagesRef = useRef<AiMessage[]>([])
+  const partialRef = useRef('')
+  const composerRef = useRef('')
+  const shotPreviewRef = useRef<string | null>(null)
+  const answeringRef = useRef(false)
   const lastFinalAtRef = useRef<number>(0)
-  const lastAutoQuestionRef = useRef<string>('')
   const consumedPartialRef = useRef<string | null>(null)
   const autoTimerRef = useRef<number | null>(null)
+  const autoSeenKeysRef = useRef<Set<string>>(new Set())
+  const autoSeenKeyOrderRef = useRef<string[]>([])
+  const autoCoveredMaxChunkIdRef = useRef(-1)
+  const conversationMemoryRef = useRef('')
   const startedAtRef = useRef<number>(Date.now())
   const persistTimerRef = useRef<number | null>(null)
 
   const fullTranscriptText = useMemo(
-    () =>
-      transcript.map((c) => (c.speaker === 'me' ? `(me) ${c.text}` : c.text)).join(' '),
+    () => transcriptChunksToText(transcript),
     [transcript]
   )
 
@@ -172,7 +215,33 @@ export function LiveSession(): JSX.Element {
     sessionTranscriptRef.current = sessionTranscript
     transcriptRef.current = transcript
     messagesRef.current = messages
-  }, [activeId, messages, session, sessionTranscript, transcript])
+    partialRef.current = partial
+    composerRef.current = composer
+    shotPreviewRef.current = shotPreview
+    answeringRef.current = answering
+  }, [
+    activeId,
+    answering,
+    composer,
+    messages,
+    partial,
+    session,
+    sessionTranscript,
+    shotPreview,
+    transcript
+  ])
+
+  useEffect(() => {
+    conversationMemoryRef.current = ''
+    setAutoQueue([])
+    autoSeenKeysRef.current.clear()
+    autoSeenKeyOrderRef.current = []
+    autoCoveredMaxChunkIdRef.current = -1
+  }, [activeId])
+
+  useEffect(() => {
+    if (!autoGenerate) setAutoQueue([])
+  }, [autoGenerate])
 
   useEffect(() => {
     chatViewRef.current?.scrollTo({ top: chatViewRef.current.scrollHeight })
@@ -191,6 +260,71 @@ export function LiveSession(): JSX.Element {
     setCaptureDisplays(displays)
   }
 
+  function setAnsweringActive(value: boolean): void {
+    answeringRef.current = value
+    setAnswering(value)
+  }
+
+  function rememberAutoSeenKey(key: string): boolean {
+    if (autoSeenKeysRef.current.has(key)) return false
+    autoSeenKeysRef.current.add(key)
+    autoSeenKeyOrderRef.current.push(key)
+    while (autoSeenKeyOrderRef.current.length > AUTO_SEEN_KEY_LIMIT) {
+      const oldKey = autoSeenKeyOrderRef.current.shift()
+      if (oldKey) autoSeenKeysRef.current.delete(oldKey)
+    }
+    return true
+  }
+
+  function uncoveredAutoCandidate(candidate: QuestionCandidate): QuestionCandidate | null {
+    if (candidate.maxChunkId <= autoCoveredMaxChunkIdRef.current) return null
+    const uncoveredChunks = transcriptRef.current.filter(
+      (chunk) =>
+        chunk.id > autoCoveredMaxChunkIdRef.current && chunk.id <= candidate.maxChunkId
+    )
+    const candidates = questionCandidatesFromTranscript(uncoveredChunks)
+    const direct = candidates.find((c) => c.maxChunkId === candidate.maxChunkId)
+    if (direct) return direct
+
+    const text = uncoveredChunks
+      .filter((chunk) => chunk.speaker === 'them')
+      .map((chunk) => chunk.text)
+      .join(' ')
+      .trim()
+    if (!text || !/[?¿]/.test(text)) return null
+    return {
+      text,
+      normalized: normalizeQuestionText(text),
+      maxChunkId: candidate.maxChunkId
+    }
+  }
+
+  function enqueueAutoQuestion(candidate: QuestionCandidate): void {
+    const uncovered = uncoveredAutoCandidate(candidate)
+    if (!uncovered) return
+    const key = autoQuestionKey(uncovered)
+    if (!rememberAutoSeenKey(key)) return
+    autoCoveredMaxChunkIdRef.current = Math.max(
+      autoCoveredMaxChunkIdRef.current,
+      uncovered.maxChunkId
+    )
+    const job: AutoQuestionJob = { ...uncovered, key }
+    setAutoQueue((prev) => (prev.some((queued) => queued.key === key) ? prev : [...prev, job]))
+  }
+
+  function rememberAnsweredExchange(questionText: string, answerText: string): void {
+    const answer = answerText.trim()
+    if (!answer) return
+    const entry = [
+      `Heard: ${limitHead(questionText || 'No transcript text.', CONVERSATION_MEMORY_ENTRY_MAX_CHARS)}`,
+      `Answered: ${limitHead(answer, CONVERSATION_MEMORY_ENTRY_MAX_CHARS)}`
+    ].join('\n')
+    conversationMemoryRef.current = limitTail(
+      [conversationMemoryRef.current.trim(), entry].filter(Boolean).join('\n\n'),
+      CONVERSATION_MEMORY_MAX_CHARS
+    )
+  }
+
   // Persist transcript / AI replies to the session every 4s while live (debounced).
   useEffect(() => {
     if (!session?.saveTranscript || !activeId) return
@@ -203,25 +337,31 @@ export function LiveSession(): JSX.Element {
     }
   }, [sessionTranscript, messages, session?.saveTranscript, activeId])
 
-  // Auto-respond only when the latest turn looks like a question/request.
+  // Auto-respond quickly, but queue extra question blocks while an answer is streaming.
   useEffect(() => {
     if (!autoGenerate) return
     if (!systemActive) return
-    if (answering) return
-    const candidate = latestThemTurn(transcript)
-    if (!candidate || !looksLikeQuestion(candidate)) return
-    const normalized = normalizeQuestionText(candidate)
-    if (normalized === lastAutoQuestionRef.current) return
+    const candidates = questionCandidatesFromTranscript(transcript)
+    if (candidates.length === 0) return
+
+    const latest = candidates[candidates.length - 1]
+    const lastChunk = transcript[transcript.length - 1]
+    const latestStillOpen = lastChunk?.speaker === 'them' && lastChunk.id === latest.maxChunkId
+    const readyNow = latestStillOpen ? candidates.slice(0, -1) : candidates
+    for (const candidate of readyNow) enqueueAutoQuestion(candidate)
+
     if (autoTimerRef.current) window.clearTimeout(autoTimerRef.current)
+    if (!latestStillOpen) return
     autoTimerRef.current = window.setTimeout(() => {
-      if (Date.now() - lastFinalAtRef.current < 700) return
-      lastAutoQuestionRef.current = normalized
-      void submitToLlm()
-    }, 800)
+      if (Date.now() - lastFinalAtRef.current < AUTO_QUESTION_SILENCE_MS - 150) return
+      const freshCandidates = questionCandidatesFromTranscript(transcriptRef.current)
+      const freshLatest = freshCandidates[freshCandidates.length - 1]
+      if (freshLatest) enqueueAutoQuestion(freshLatest)
+    }, AUTO_QUESTION_SILENCE_MS)
     return () => {
       if (autoTimerRef.current) window.clearTimeout(autoTimerRef.current)
     }
-  }, [transcript, autoGenerate, systemActive, answering])
+  }, [transcript, autoGenerate, systemActive])
 
   // Cleanup on unmount.
   useEffect(
@@ -483,6 +623,7 @@ export function LiveSession(): JSX.Element {
   }
 
   const submitToLlm = useCallback(async (options: SubmitToLlmOptions = {}): Promise<void> => {
+    if (answeringRef.current) return
     if (!session) return
     if (!provider) {
       logger.warn('[Live] submitToLlm: no provider')
@@ -495,27 +636,45 @@ export function LiveSession(): JSX.Element {
       setErrorMsg('The selected AI profile has no model. Open it and add one.')
       return
     }
-    const fullText = (fullTranscriptText + (partial ? ' ' + partial : '')).trim()
-    const imageUrl = options.imageUrl ?? shotPreview
+    const liveTranscript = transcriptRef.current
+    const livePartial = partialRef.current.trim()
+    const activeComposer = composerRef.current.trim()
+    const imageUrl = options.imageUrl ?? shotPreviewRef.current
+    const autoQuestion = options.autoQuestion
+    const pendingText = transcriptChunksToText(liveTranscript)
+    const fullText = autoQuestion
+      ? autoQuestion.text.trim()
+      : (pendingText + (livePartial ? ' ' + livePartial : '')).trim()
     if (imageUrl && !modelSupportsImages(provider, modelToUse)) {
       setErrorMsg(
         `${provider.label || provider.kind} / ${modelToUse} does not look like a vision model. Pick a model with image support before using screenshot answers.`
       )
       return
     }
-    if (!fullText && !composer.trim() && !imageUrl) {
+    if (!fullText && !activeComposer && !imageUrl) {
       logger.debug('[Live] submitToLlm: nothing to send (empty transcript + composer + image)')
       return
     }
     // Send only the last ~2000 chars to keep the prompt small and the LLM responsive.
     // The most recent part of the transcript is what the AI needs to answer.
-    const transcriptText = fullText.length > 2000 ? '…' + fullText.slice(-2000) : fullText
+    const transcriptText = limitTail(fullText, 2000)
     const consumedContext: SubmittedTranscriptContext = {
-      maxChunkId: transcript.length > 0 ? transcript[transcript.length - 1].id : null,
-      partialText: partial.trim()
+      maxChunkId: autoQuestion?.maxChunkId ?? (liveTranscript.at(-1)?.id ?? null),
+      partialText: autoQuestion ? '' : livePartial,
+      memoryText: [
+        transcriptText,
+        activeComposer ? `User instruction: ${activeComposer}` : ''
+      ].filter(Boolean).join('\n')
+    }
+    if (!autoQuestion && consumedContext.maxChunkId !== null) {
+      setAutoQueue([])
+      autoCoveredMaxChunkIdRef.current = Math.max(
+        autoCoveredMaxChunkIdRef.current,
+        consumedContext.maxChunkId
+      )
     }
     logger.debug(
-      '[Live] submitToLlm →',
+      '[Live] submitToLlm ->',
       provider.kind,
       provider.label,
       modelToUse,
@@ -528,9 +687,10 @@ export function LiveSession(): JSX.Element {
     const images = imageUrl ? [imageUrl] : []
     const userInstruction = [
       imageUrl ? SCREENSHOT_REPLY_INSTRUCTION : '',
-      composer.trim()
+      activeComposer
     ].filter(Boolean).join('\n')
     const id = messageIdRef.current++
+    let answerText = ''
     setMessages((prev) => [
       ...prev,
       {
@@ -541,7 +701,7 @@ export function LiveSession(): JSX.Element {
         ts: Date.now()
       }
     ])
-    setAnswering(true)
+    setAnsweringActive(true)
 
     try {
       await chatStream({
@@ -549,18 +709,27 @@ export function LiveSession(): JSX.Element {
         model: modelToUse,
         messages: [
           { role: 'system', content: buildSystemPrompt(session) },
-          { role: 'user', content: buildUserPrompt(transcriptText, userInstruction) }
+          {
+            role: 'user',
+            content: buildUserPrompt(transcriptText, {
+              userInstruction,
+              conversationMemory: conversationMemoryRef.current
+            })
+          }
         ],
         images,
         signal: ac.signal,
-        onDelta: (d) =>
+        onDelta: (d) => {
+          answerText += d
           setMessages((prev) =>
             prev.map((m) => (m.id === id ? { ...m, text: m.text + d } : m))
-          ),
+          )
+        },
         onDone: () => {
+          rememberAnsweredExchange(consumedContext.memoryText, answerText)
           markSubmittedTranscriptConsumed(consumedContext)
           setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, streaming: false } : m)))
-          setAnswering(false)
+          setAnsweringActive(false)
           if (imageUrl) {
             setShotPreview((current) => (current === imageUrl ? null : current))
           }
@@ -568,27 +737,44 @@ export function LiveSession(): JSX.Element {
         },
         onError: (err) => {
           setErrorMsg(err.message)
+          setAutoQueue([])
           setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, streaming: false } : m)))
-          setAnswering(false)
+          setAnsweringActive(false)
         }
       })
     } finally {
-      setAnswering(false)
+      if (abortRef.current === ac) abortRef.current = null
+      setAnsweringActive(false)
     }
-  }, [session, provider, fullTranscriptText, transcript, partial, composer, shotPreview])
+  }, [session, provider])
+
+  useEffect(() => {
+    if (!autoGenerate) return
+    if (!systemActive) return
+    if (answering) return
+    if (autoQueue.length === 0) return
+    const next = autoQueue[0]
+    setAutoQueue((prev) => prev.slice(1))
+    void submitToLlm({ autoQuestion: next })
+  }, [autoQueue, autoGenerate, answering, systemActive, submitToLlm])
 
   function clearBuffer(): void {
     transcriptRef.current = []
     setTranscript([])
     setPartial('')
+    setAutoQueue([])
+    autoSeenKeysRef.current.clear()
+    autoSeenKeyOrderRef.current = []
+    autoCoveredMaxChunkIdRef.current = -1
     consumedPartialRef.current = null
     lastFinalAtRef.current = Date.now()
   }
 
   function stopAnswer(): void {
     abortRef.current?.abort()
+    setAutoQueue([])
     setMessages((prev) => prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)))
-    setAnswering(false)
+    setAnsweringActive(false)
   }
 
   function copyMessage(text: string): void {
@@ -657,6 +843,14 @@ export function LiveSession(): JSX.Element {
     settings.screenCaptureDisplayId === 'auto' || !settings.screenCaptureDisplayId
       ? 'Auto'
       : selectedCaptureDisplay?.label ?? 'Selected display'
+  const pendingTranscriptStatus =
+    autoQueue.length > 0
+      ? `${autoQueue.length} queued`
+      : !systemActive && !micActive
+        ? 'Transcription off'
+        : transcript.length >= MAX_TRANSCRIPT_ITEMS
+          ? `Last ${MAX_TRANSCRIPT_ITEMS}`
+          : `${transcript.length} lines`
 
   if (!session) {
     return (
@@ -811,11 +1005,7 @@ export function LiveSession(): JSX.Element {
             Pending transcript
           </div>
           <div className="text-[10px] text-muted-foreground">
-            {!systemActive && !micActive
-              ? 'Transcription off'
-              : transcript.length >= MAX_TRANSCRIPT_ITEMS
-                ? `Last ${MAX_TRANSCRIPT_ITEMS}`
-                : `${transcript.length} lines`}
+            {pendingTranscriptStatus}
           </div>
         </div>
         <div

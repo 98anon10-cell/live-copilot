@@ -19,6 +19,9 @@
 - Added portable data directory support.
 - Added screenshot-to-answer flow.
 - Added capture-display selector.
+- Added queued auto-answering for consecutive question blocks, with compact
+  conversation memory so later answers keep context without sending the full
+  transcript.
 - Added global screenshot answer shortcut.
 - Added tray menu for show, pill mode, privacy, always-on-top and quick actions.
 - Added local API key encryption with Electron safeStorage.

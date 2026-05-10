@@ -36,11 +36,14 @@ va al proveedor STT elegido y el prompt va al proveedor LLM elegido.
   - Cualquier endpoint OpenAI-compatible.
 - Respuestas en streaming.
 - Captura de pantalla con respuesta automatica y selector de monitor.
+- Auto-respuesta instantanea con cola: la primera pregunta se responde en
+  streaming tras una pausa corta; si llegan mas preguntas mientras responde, se
+  contestan despues en orden.
 - Aviso previo si el modelo seleccionado no parece soportar imagenes.
 - Transcript pendiente: al generar una respuesta, el texto usado como contexto se
   limpia del panel para que la siguiente respuesta no arrastre preguntas ya
-  contestadas. El historico completo se conserva para guardado/exportacion si
-  `Save transcript` esta activo.
+  contestadas. Antes de limpiarlo, la app guarda una memoria compacta de lo
+  contestado para mantener contexto sin enviar una conversacion infinita.
 - Atajos globales:
   - `Ctrl/Cmd+Shift+H`: alterna modo pill.
   - `Ctrl/Cmd+Shift+P`: alterna modo privado.
@@ -189,7 +192,8 @@ claras de uso en llamadas, reuniones o procesos de seleccion.
 5. Inicia la sesion.
 6. Elige fuente de audio en la barra superior.
 7. Usa Answer para generar una respuesta, o activa Auto-respond para que se
-   dispare cuando la ultima intervencion parezca una pregunta.
+   dispare cuando detecte una pregunta o peticion. Si llegan varias seguidas, la
+   primera sale rapido y las siguientes quedan en cola.
 
 ## Datos locales
 

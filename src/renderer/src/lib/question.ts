@@ -8,6 +8,11 @@ const QUESTION_PREFIXES = [
   'where',
   'who',
   'which',
+  'and what',
+  'and why',
+  'and how',
+  'and when',
+  'and where',
   'can you',
   'could you',
   'would you',
@@ -19,6 +24,11 @@ const QUESTION_PREFIXES = [
   'walk me through',
   'describe',
   'explain',
+  'give me',
+  'show me',
+  'help me',
+  'i want you to',
+  'i would like you to',
   'que',
   'qué',
   'por que',
@@ -33,13 +43,32 @@ const QUESTION_PREFIXES = [
   'quién',
   'cual',
   'cuál',
+  'y que',
+  'y qué',
+  'y por que',
+  'y por qué',
+  'y como',
+  'y cómo',
   'puedes',
   'podrias',
   'podrías',
+  'dime',
+  'dame',
+  'ayudame',
+  'ayúdame',
+  'haz',
+  'resume',
+  'analiza',
   'explica',
   'cuentame',
   'cuéntame'
 ]
+
+export interface QuestionCandidate {
+  text: string
+  normalized: string
+  maxChunkId: number
+}
 
 export function normalizeQuestionText(text: string): string {
   return text
@@ -68,4 +97,37 @@ export function latestThemTurn<T extends TranscriptChunk>(chunks: T[]): string |
     parts.unshift(chunk.text)
   }
   return parts.join(' ').trim() || null
+}
+
+export function questionCandidatesFromTranscript<T extends TranscriptChunk & { id: number }>(
+  chunks: T[]
+): QuestionCandidate[] {
+  const candidates: QuestionCandidate[] = []
+  let parts: string[] = []
+  let maxChunkId: number | null = null
+
+  const flush = (): void => {
+    const text = parts.join(' ').trim()
+    if (text && maxChunkId !== null && looksLikeQuestion(text)) {
+      candidates.push({
+        text,
+        normalized: normalizeQuestionText(text),
+        maxChunkId
+      })
+    }
+    parts = []
+    maxChunkId = null
+  }
+
+  for (const chunk of chunks) {
+    if (chunk.speaker !== 'them') {
+      flush()
+      continue
+    }
+    parts.push(chunk.text)
+    maxChunkId = chunk.id
+  }
+  flush()
+
+  return candidates
 }
